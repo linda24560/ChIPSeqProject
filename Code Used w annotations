@@ -1,0 +1,176 @@
+#knitr::include_graphics('images/hex-rmarkdown.png')
+macs.res<-read.table("./PeakAna_clk_Ip_vs_INP_peaks_bed.txt",header = T) ##This opens the text file wth the data table macs.res
+?head(macs.res) ##This prints the fist 6 rows of each column in the data table macs.res
+
+#INSTALL PACKAGES################################################################
+
+#install.packages("BiocManager") ##Install BiocManager package
+
+#install.packages("amap")
+
+#install.packages("ggplot2")
+
+#BiocManager::install("GenomicFeatures")  ##Install GenomicFeatures package via BiocManager
+
+#BiocManager::install("Biostrings")  ##Install Biostrings library vis BiocManager
+
+#BiocManager::install("ChIPpeakAnno") ##Install ChIPpeakAnno library via BiocManager
+
+library(GenomicFeatures) ##Open/Access GenomicFeatures library
+
+library(ChIPpeakAnno)  ##Open/Access ChIPpeakAnno library
+
+#READING GTF ANNOTATION FILE#####################################################
+
+txdb=makeTxDbFromGFF(file="annot2.chr.gtf", format = "gtf", dataSource="dm6", organism="Drosophila melanogaster") 
+
+#This funciton is reads the .gtf file and creates a Text Database (TxDb) from the transcript annotations in the file. 
+saveDb(txdb, file="./dm6.sqlite") ##saves txdb as a sqlite, a library for the database and outputs a summary of the data from the database. 
+txdb=loadDb("./dm6.sqlite") ##Sets the value of txdb to the sqlite library so it is loaded directly without creating the database. 
+
+#EXTRACTING GENES AND DATA FROM DATABSE##########################################
+
+ge=genes(txdb, columns=c("tx_name", "gene_id", "tx_type")) ##Creates a dataset with the genomic ranges of the genes.
+
+as.data.frame(head(ge)) ##Prints out the first couple rows from the dataset ge with the genes. 
+
+#GETTING GENOMIC RANGES OF THE PEAKS##############################################
+peaksGR=GRanges(macs.res) ##Creates a GRanges object. Sets peaksGR as the data retreieved by using the function GRanges to gather the denomic ranges of the peaks from MACS. 
+annotatedPeak <- annotatePeakInBatch(peaksGR, AnnotationData=genes(txdb)) ##Creates dataset annotatedPeak to store the annotations created from the annotatePeak funtion using the data from the txdb dataset.
+as.data.frame(head(annotatedPeak)) ##Prints the first couple rowsfrom the table of the dataset annotatedPeak. Lists where the peaks are for each of the genes. 
+
+library(AnnotationDbi) ##accesses the annotationDbi package
+#BiocManager::install("org.Dm.eg.db") ##Installs the org.Dm.eg.db package
+library(org.Dm.eg.db) ##accesses the org.Dm.eg.db package.
+dm.select = select
+library(dplyr) ##Accesses the dplyr package which is needed to manulate the data frames. 
+
+
+#GETTING GENE NAMES###############################################################
+
+GeneNames = AnnotationDbi::select(org.Dm.eg.db, c(as.character(annotatedPeak$feature)), "SYMBOL", keytype = "ENSEMBL") 
+#retrieves data as data.frame named GeneNames. Is selecting from the organism specific package "org.Dm.eg.db" and selecting for objects of the type "character" from annotatedPeaks's feature column, and retrieving columns that are "symbol"s and have the keytype "ENSEMBL"
+
+GeneNames$feature=GeneNames$ENSEMBL ##Creates object GeneName
+head(GeneNames) ##Returns the beginning couple rows of the dataframe GeneNames
+class(GeneNames)  ##Gives you the class of "GeneNames". It is a data frame. 
+
+GeneNames=GeneNames[,-1] ##Returns the beginning couple rows of the dataframe "GeneNames" but excludes the first column "Ensembl" (Only Symbol and Feature are included)
+head(GeneNames) ##prints the new data set GeneNames after the column Ensembl has been removed. 
+
+
+class(annotatedPeak) ##tells us the class of "annotatedPeak". It has the class "Genomic Ranges"
+annotatedPeak_df=as.data.frame(annotatedPeak) ##annotatedPeak_df is changed to a data frame so it can be manipulated and rewritten as a table. 
+annotatedPeak_df=left_join(annotatedPeak_df,GeneNames, by="feature")  ##This merges everything in annotatedPeak_df with GeneNames if they have matching features. If features are the same, it rewrites the two tables as one table with values from annotatedPeak_df and GeneNames.
+write.table(annotatedPeak_df,file = "ChipPeakAnno_results.xls",row.names = T,col.names = T,sep="\t") ## this actually writes the table we generated in the previous line of code. 
+
+
+#ANNOTATING WITH CHIPSEEKER######################################################
+
+#BiocManager::install("ChIPseeker") ##Installs the annotation package ChIPseeker
+library(ChIPseeker) ##accesses/loads the ChIPseeker package. 
+peakAnno <- annotatePeak(peaksGR, TxDb=txdb, verbose=FALSE) 
+##Creates the object "peakAnno" which consists of the annotated peaks of "peaksGR" and uses the annocations stored in txdb. verbose=false tells it not to print it. 
+peakAnno_df <- as.data.frame(peakAnno)  ##Sets peakAnno as a dataframe named "peakAnno_df"
+
+GeneNames = AnnotationDbi::select(org.Dm.eg.db, c(as.character(peakAnno_df$geneId)), "SYMBOL", keytype = "ENSEMBL") ## Same as before. 
+GeneNames$geneId=GeneNames$ENSEMBL ##sets the geneID column of GeneNames as the Ensembl column of GeneNames
+head(GeneNames) ##prints the new data set GeneNames
+
+GeneNames=GeneNames[,-1] ##Alters the dataset GeneDames to exlude the first column.
+
+peakAnno_df=peakAnno_df %>% left_join(GeneNames, by="geneId") #this is merging the two tables by the column GeneId
+head(peakAnno_df) ## prints the first couple rows of the dataset "peakAnno_df"
+
+?write.table(peakAnno_df,file = "ChIPseekerAnno_results.xls",row.names = T,col.names = T,sep="\t") # Writes data fram peakAnno_df as a table. Output written in file ChIPseekerAnno_results.xls, row names and column names are to be written along with peakAnno_df and 
+
+
+peakAnno_df_tim=peakAnno_df[?which(peakAnno_df$SYMBOL=="tim"),] #Datatable peakAnno_df_tim created which includes the data from datatable peakAnno_df that has Symbol equalling "tim"
+peakAnno_df_tim=peakAnno_df_tim[order(peakAnno_df_tim$X.log10.pvalue.,decreasing = T),] # we order them by log10(pval). This rearranges peakAnno_df_tim in decreasing order of the value in the column "X.log10.pvalue". The row with the largest X.log10.pvalue would be at the top and the row with the lowest x.log10.pvalue would be at the bottom. 
+
+as.data.frame(head(peakAnno_df_tim)) #pulls up the first couple rows of the datatable peakAnno_df_tim and rewrites it as a separate data frame. 
+
+covplot(peaksGR, weightCol="X.log10.pvalue.",chrs=c("chr2L","chr2R","chr3L","chr3R","chr4","chrX","chrY")) ##creates peak coverage plot of ChIP Peaks over chromosomes. Displays distribution of peaks for different chromosome sizes. 
+peakHeatmap(peaksGR, TxDb=txdb, upstream=1000, downstream=1000, color="green") # creates a heatmap plot which shows the general distribution of the peaks in relation to the transcription start sites. 
+plotAvgProf2(peaksGR, TxDb=txdb, upstream=1000, downstream=1000, xlab="Genomic Region (5'->3')", ylab = "Read Count Frequency") #plots the profile of the peaks that align to flank sequences of TSS.
+#BiocManager::install("seqLogo") #installs the seqLogo package from BiocManager
+#BiocManager::install("BCRANK") #installs the BCRANK package from BioManager
+#BiocManager::install("gridExtra")
+library(Biostrings); library(seqLogo); library(BCRANK); library(gridExtra) #loads the Biostrings, seqLogo, BCRANK, and gridExtra libraries. 
+peaksGR <- peaksGR[order(peaksGR$X.log10.pvalue., decreasing=TRUE)] #order the peacks according to cecreasing pvalue and sets as dataset peaksGR
+
+if (!requireNamespace("BiocManager", quietly = TRUE))
+#BiocManager::install("Rsamtools") #installs Rsamtools
+library("Rsamtools") #accesses Rsamtools
+pseq <- getSeq(FaFile("./dm6.fa"), peaksGR) #extract thes sequence of the peaks and sets it as object "pseq"
+
+as.data.frame(head(pseq)) #Sees how the object pseq looks.
+as.data.frame(head(peaksGR)) #shows the first couple lines of peaksGR.
+
+writeXStringSet(pseq, "peaksGR.fasta") #uses the names and save the peaks in fasta format. This creates a text file with many long strings of DNA sequences separated by chromosome
+
+#Finding MOTIFS#################################################
+set.seed(0)
+BCRANKout <- bcrank("peaksGR.fasta", restarts=25, use.P1=TRUE, use.P2=TRUE) #inputs data from peaksGR.fasta into BCRANK using 25 restarts and penalty for repititive sequences and noncanonical letters. Output is saved as object BCRANKout. 
+head(toptable(BCRANKout)) #gives the first couple rows of the output from the BCRANK
+a<-BCRANKout@toplist #Sets the toplist of the BCRANKout (output) as the variable a
+a[[1]] #Prints  the first column of a.
+
+#PLOTTING RESULTS OF BCRANK######################################
+topMotif <- toptable(BCRANKout, i=1) #stores the top motif from toptable in the object "topMotif"
+weightMatrix <- pwm(topMotif, normalize = FALSE) #uses the pwa function. holds the whole search path from the bcrank run. Because normalize is false, the number of matching sequences is reported.  Returns the position weight matrix
+weightMatrixNormalized <- pwm(topMotif, normalize = TRUE) #uses the pwa function. holds the whole search path from the bcrank run. Because normalize is true, the Matrix positions are between between 0 and 1.  Returns the position weight matrix
+seqLogo(weightMatrixNormalized,ic.scale = T) #takes 4xW position weight of DNA sequence motif and plots sequence logo. 
+p<-makePWM(as.data.frame(weightMatrixNormalized)) #Creates pwm object from the matrix. Checks the columns adds up to 1 and sets this object as variable p
+p@consensus #extracts the contents of the consensus slot in object p.  
+seqLogo(p) #takes the 4xW position weight matrix of a DNA sequence motif and plots the corresponding sequence logo.
+topt<-as.data.frame(toptable(BCRANKout)) #extract the results as a table so data can be analyzed. Set as topt. 
+head(topt) #gives the first couple rows of the data table topt
+library(ggplot2) #accesses the ggplot library
+#install.packages("devtools") #installs developers tools so we can download packages from github. 
+library("devtools") #accesses the developers tools
+#install_github("omarwagih/ggseqlogo") #installs the ggseqlogo from github
+#install.packages("ggseqlogo")
+library(ggseqlogo) #accesses ggseqlogo
+
+
+seqs_list=list() #Creates an empty list that we will fill up over the loop
+for(e in 1:16){ #loops 16 times. 
+  print(e) #each loop is printed. 
+  topMotif <- toptable(BCRANKout, i=e) #sets motif number as e.
+weightMatrixNormalized <- pwm(topMotif, normalize = TRUE) #do some process witht he motif
+seqs_list[[e]]<-weightMatrixNormalized #add the processed motif to the list in position e. Loop fills up the list. 
+}
+
+seqs_dna = seqs_list[[1]] # Get first set of sequences
+
+# Plot a sequence logo with the 2 different methods avilable
+p1 = ggseqlogo( seqs_dna, method = 'prob' )
+p2 = ggseqlogo( seqs_dna, method = 'bits' ) +labs(y="Information Content") #this changed the name of the `y` axes
+grid.arrange(p1, p2) #arranges the two plots next to each other. 
+
+#Plot all the first 12 sequences
+ggplot() + geom_logo(seqs_list,method = 'prob') + theme_logo() + 
+  facet_wrap(~seq_group, ncol=4)
+
+toLatex(sessionInfo()) #gives list of packages installed. 
+
+################################################################################################
+################################################################################################
+####################################### Part 6: Extra Stuff ####################################
+################################################################################################
+################################################################################################
+
+txdb <- makeTxDbFromGFF(file="./Drosophila_melanogaster.BDGP6.92.gtf", format = "gtf", dataSource="dm6", organism="Drosophila melanogaster") #Opens the drosophila annotation files as a textdatabase.
+saveDb(txdb, file="../dm6.sqlite") ##saves txdb as a sqlite, a library for the database and outputs a summary of the data from the database. 
+txdb <- loadDb("../dm6.sqlite")##Sets the value of txdb to the sqlite library so it is loaded directly without creating the database. 
+class(txdb) #gives the class type of the txbd
+ge <- genes(txdb, columns=c("tx_name", "gene_id", "tx_type")) #get the genes genomic ranges
+as.data.frame(head(ge)) #saves the beginning couple rows of ge as a dataframe
+peaksGR<-GRanges(macs.res) # create the GRanges object of the macs-table 
+annotatedPeak <- annotatePeakInBatch(peaksGR, AnnotationData=genes(txdb)) ##Creates dataset annotatedPeak to store the annotations created from the annotatePeak funtion using the data from the txdb dataset.
+head(annotatedPeak) ##gives the first couple rows of annotatedPeak
+
+#comparing the first couple lines ge and annotatedpeaks objects
+as.data.frame(head(ge))
+as.data.frame(head(annotatedPeak))
